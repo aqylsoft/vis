@@ -82,3 +82,10 @@ class TestTtcColor:
 
     def test_below_warn(self):
         assert ttc_color(0.1, warn_s=2.5, caution_s=4.5) == TTC_COLOR_WARN
+
+
+def test_ruleset_enforcement_check_intentionally_fails():
+    """Temporary: deliberately red, used to verify the master branch ruleset
+    actually blocks merging while a required check is failing. Removed
+    immediately after the check."""
+    assert False
