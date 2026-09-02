@@ -24,9 +24,9 @@ from ultralytics import YOLO
 from tracker import MultiObjectTracker
 from calibration import calibrate
 from ego_motion import EgoMotionEstimator
+from alerts import filter_bogus_detections, is_ttc_eligible, ttc_color
 
 COCO_CLASSES_OF_INTEREST = {0: "person", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
-VEHICLE_CLASSES = {"car", "motorcycle", "bus", "truck"}
 
 COLORS = {
     "person": (0, 200, 255),
@@ -35,52 +35,6 @@ COLORS = {
     "bus": (255, 0, 200),
     "truck": (0, 100, 255),
 }
-
-TTC_COLOR_OK = (0, 255, 0)
-TTC_COLOR_CAUTION = (0, 220, 255)
-TTC_COLOR_WARN = (0, 0, 255)
-
-
-def filter_bogus_detections(detections, frame_w, frame_h, max_area_ratio, road_roi_bottom):
-    """
-    Отбрасывает детекции-мусор:
-    - боксы, занимающие неправдоподобно большую долю кадра (типичный false
-      positive nano-модели на нетипичном ракурсе — весь салон+лобовое стекло
-      принимается за один гигантский "car");
-    - боксы, чей центр лежит ниже road_roi_bottom (доля высоты кадра) — это зона
-      капота/приборки/рук водителя на dashcam-видео из салона, она никогда не
-      содержит реальные объекты на дороге, зато регулярно даёт ложный "person"
-      на руках на руле;
-    - вырожденные боксы нулевого размера.
-    """
-    frame_area = frame_w * frame_h
-    road_limit_y = frame_h * road_roi_bottom
-    clean = []
-    for box, cls_id in detections:
-        x1, y1, x2, y2 = box
-        area = max(0.0, x2 - x1) * max(0.0, y2 - y1)
-        if area <= 1.0:
-            continue
-        if area / frame_area > max_area_ratio:
-            continue
-        cy = (y1 + y2) / 2
-        if cy > road_limit_y:
-            continue
-        clean.append((box, cls_id))
-    return clean
-
-
-def in_lane_band(cx, frame_w, band):
-    lo, hi = band[0] * frame_w, band[1] * frame_w
-    return lo <= cx <= hi
-
-
-def ttc_color(ttc, warn_s, caution_s):
-    if ttc <= warn_s:
-        return TTC_COLOR_WARN
-    if ttc <= caution_s:
-        return TTC_COLOR_CAUTION
-    return TTC_COLOR_OK
 
 
 def run(source, output_path, model_name, conf, display, forecast_steps,
@@ -163,7 +117,7 @@ def run(source, output_path, model_name, conf, display, forecast_steps,
             cx, cy = float(t.kf.x[0, 0]), float(t.kf.x[1, 0])
 
             ttc = t.ttc_seconds()
-            is_ahead = cls_name in VEHICLE_CLASSES and in_lane_band(cx, width, lane_band)
+            is_ahead = is_ttc_eligible(cls_name, cx, width, lane_band)
 
             label = f"#{t.id} {cls_name}"
             color = base_color
