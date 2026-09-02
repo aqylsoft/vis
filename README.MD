@@ -77,10 +77,14 @@ python -m pytest
 
 For headless/batch use (processing a video file on a server, or in CI) a
 `Dockerfile` is included so behavior doesn't depend on what's installed on
-the host. It's a multi-stage build: `base` installs `requirements.txt` and
-the OS libs opencv/torch need even without a display; `test` adds
-`requirements-dev.txt` and runs pytest; `runtime` (the default target) runs
-`main.py --no-display`.
+the host. It's a multi-stage build that keeps the build environment out of
+the shipped image: a `builder` stage installs `requirements.txt` into a venv
+(`test-builder` does the same plus `requirements-dev.txt`), while the final
+`runtime`/`test` stages start fresh from a slim base, add only the OS libs
+opencv/torch need even without a display, and copy in just the venv they
+need — no pip, no apt package lists, no build-time files ever reach the
+final image. `runtime` (the default target) runs `main.py --no-display`;
+`test` runs pytest.
 
 ```bash
 make docker-build                       # build the runtime image
