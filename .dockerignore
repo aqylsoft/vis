@@ -1,0 +1,10 @@
+.git
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.ci-passed
+output/
+*.pt
+*.mp4
+.DS_Store
