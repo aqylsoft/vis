@@ -131,3 +131,6 @@ skips straight to success instead of re-testing.
   production rather than staying a prototype.
 - Export metrics to Prometheus instead of/alongside CSV — "where to stream
   this" can later point at Postgres or a queue just as easily.
+- Pin dependency versions in `requirements.txt` (currently `>=`) for
+  reproducible installs — a breaking `ultralytics`/`torch` release could
+  otherwise break the build with no change to this repo at all.
