@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Content-addressed cache key: any push to master whose test-relevant
+      # files exactly match a tree already verified (normally the PR that
+      # was just merged) hits this cache and skips re-running pytest,
+      # instead of re-testing code the PR's own CI run already tested.
+      - name: Restore verified-tests cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: .ci-passed
+          key: pytest-passed-${{ hashFiles('**/*.py', 'requirements.txt', 'requirements-dev.txt') }}
+
+      - name: Set up Python
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: python -m pytest -v
+
+      - name: Mark tests as verified
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: echo "verified on $(date -u +%FT%TZ) by ${{ github.sha }}" > .ci-passed
+
+      - name: Reused PR test result
+        if: steps.cache.outputs.cache-hit == 'true'
+        run: echo "This exact code was already verified by a prior Actions run (typically this PR's own CI) — reusing that result instead of re-running pytest."

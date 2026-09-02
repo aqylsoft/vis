@@ -1,67 +1,93 @@
-# Driver Assist CV — прототип
+# Driver Assist CV — prototype
 
-Пайплайн: детекция объектов (YOLOv8) → трекинг с Kalman-фильтром (constant velocity)
-→ прогноз траектории на N кадров вперёд → аналитика потока (счётчик пересечений линии,
-скорость, направление) по классам: person, car, motorcycle, bus, truck.
+Pipeline: object detection (YOLOv8) → tracking with a constant-velocity Kalman
+filter and Hungarian association by IoU → TTC (time-to-collision) warning for
+objects ahead → ego-path forecast from optical flow → auto-calibration of the
+camera's road ROI and inference resolution. Classes of interest: person, car,
+motorcycle, bus, truck.
 
-## Установка
+## Install
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Веса `yolov8n.pt` скачаются автоматически при первом запуске (nano-модель, самая
-быстрая — подходит для CPU и прототипирования; для точности возьми `yolov8s.pt`/`yolov8m.pt`).
+`yolov8n.pt` weights download automatically on first run (nano model, the
+fastest — good for CPU/prototyping; use `yolov8s.pt`/`yolov8m.pt` for better
+accuracy).
 
-## Запуск
+## Run
 
 ```bash
-# на видеофайле
+# on a video file
 python main.py --source path/to/video.mp4 --output output/result.mp4
 
-# с веб-камеры, без окна превью (например на сервере)
+# from a webcam, no preview window (e.g. on a server)
 python main.py --source 0 --no-display
-
-# со скоростью в км/ч (нужна калибровка: сколько пикселей = 1 метр в кадре)
-python main.py --source video.mp4 --px-per-meter 20
 ```
 
-Результат:
-- `output/result.mp4` — видео с боксами, ID, линией потока, счётчиками, хвостом
-  реальной траектории (сплошная линия) и прогнозом (жёлтый пунктир вперёд).
-- `output/tracks.csv` — покадровые координаты и скорости всех треков для дальнейшего
-  анализа (pandas/Grafana/что угодно).
+Output:
+- `output/result.mp4` — annotated video: boxes, track IDs, TTC labels/colors,
+  the collision-warning banner, the real trajectory tail, the short-term
+  motion forecast (yellow dashed line), and the predicted ego-path corridor
+  (a perspective trapezoid projected onto the road ahead).
+- `output/tracks.csv` — per-frame track coordinates, box width and TTC for
+  further analysis (pandas/Grafana/whatever).
 
-## Как это устроено
+## How it works
 
-- **tracker.py** — `MultiObjectTracker`: на каждый объект отдельный Kalman-фильтр
-  с состоянием `[cx, cy, w, h, vx, vy, vw, vh]`. Ассоциация детекций с треками —
-  Hungarian algorithm по IoU. `forecast_path()` прогоняет модель движения вперёд без
-  обновления реального состояния — это и есть "прогнозирование движения".
-- **alerts.py** — чистая логика фильтрации детекций и TTC-алертов (без cv2/YOLO):
-  `filter_bogus_detections`, `is_ttc_eligible`, `ttc_color`. TTC считается для
-  машин/мотоциклов/автобусов/грузовиков **и пешеходов** по центральной полосе —
-  пешеход, идущий на камеру, приближается физически так же (бокс растёт по
-  ширине), поэтому исключать его из алерта было бы дырой в безопасности.
-- **main.py** — читает кадры, гоняет YOLO, кормит детекции в трекер, рисует оверлей,
-  считает пересечения виртуальной линии (`FlowAnalytics`) отдельно по классам и
-  направлениям (вверх/вниз) — это и есть "аналитика потока".
+- **tracker.py** — `MultiObjectTracker`: a separate constant-velocity Kalman
+  filter per object, state `[cx, cy, w, h, vx, vy, vw, vh]`. Detections are
+  associated to tracks via the Hungarian algorithm on IoU. `forecast_path()`
+  rolls the motion model forward without updating the real filter state —
+  that's the "motion forecast".
+- **alerts.py** — pure detection-filtering and TTC-alert logic (no cv2/YOLO
+  dependency): `filter_bogus_detections`, `is_ttc_eligible`, `ttc_color`. TTC
+  is computed for cars/motorcycles/buses/trucks **and pedestrians** in the
+  central lane band — a pedestrian walking toward the camera closes distance
+  the same way a vehicle does (their box grows in width too), so excluding
+  them from the alert would leave the most dangerous case unguarded.
+- **ego_motion.py** — `EgoMotionEstimator`: estimates the car's own yaw
+  (turning) from optical flow of the static background near the horizon (no
+  CAN bus / steering data available), smooths it, and projects a perspective
+  road corridor as the predicted ego-path.
+- **calibration.py** — auto-calibrates, from a few seconds of video, where the
+  dashboard/hood/hands-on-wheel region ends and the road begins
+  (`road_roi_bottom`), and whether a larger YOLO inference resolution
+  meaningfully improves detection (`imgsz`) — both vary by camera mount and
+  are picked automatically instead of needing per-camera manual tuning.
+- **main.py** — reads frames, runs YOLO, feeds detections into the tracker,
+  draws the overlay (boxes, TTC, ego-path corridor, collision-warning
+  banner), and writes the annotated video + CSV.
 
-## Тесты
+## Tests
 
-Юнит-тесты покрывают чистую логику (`tracker.py`, `alerts.py`) без зависимости
-от cv2/ultralytics, так что их можно гонять без тяжёлых CV/ML-пакетов:
+Unit tests cover the pure logic (`tracker.py`, `alerts.py`) without depending
+on cv2/ultralytics, so they run without installing the heavy CV/ML stack:
 
 ```bash
 pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-## Куда развивать дальше
+## CI
 
-- Заменить constant-velocity модель на constant-acceleration или CTRV (для поворотов).
-- Несколько линий/полигонов зон вместо одной линии — считать переходы между зонами.
-- Вынести инференс в отдельный процесс/сервис на Go (gRPC к Python-инференсу или
-  ONNX Runtime прямо из Go) — если пойдёт в прод, а не прототип.
-- Экспорт метрик в Prometheus вместо/вместе с CSV — то самое "куда стримить" потом
-  можно завести хоть в тот же Postgres, хоть в очередь.
+GitHub Actions (`.github/workflows/ci.yml`) runs the test suite on every pull
+request targeting `master` and on every push to `master` (i.e. after a
+merge). The push-to-`master` run reuses the PR's own test result instead of
+re-running pytest: it caches a "verified" marker keyed by a hash of all
+`*.py`/requirements files, so when the exact code just tested in the PR lands
+on `master` unchanged (the normal merge case), the cache hits and the job
+skips straight to success instead of re-testing.
+
+## Where to take this next
+
+- Replace the constant-velocity model with constant-acceleration or CTRV (for
+  turns).
+- Multiple lane bands / zone polygons instead of a single central band —
+  track transitions between zones (e.g. a vehicle merging into the ego lane).
+- Move inference into a separate process/service in Go (gRPC to a Python
+  inference service, or ONNX Runtime straight from Go) — if this goes to
+  production rather than staying a prototype.
+- Export metrics to Prometheus instead of/alongside CSV — "where to stream
+  this" can later point at Postgres or a queue just as easily.
