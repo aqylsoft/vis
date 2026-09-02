@@ -10,6 +10,7 @@ motorcycle, bus, truck.
 
 ```bash
 pip install -r requirements.txt
+# or: make install
 ```
 
 `yolov8n.pt` weights download automatically on first run (nano model, the
@@ -21,6 +22,7 @@ accuracy).
 ```bash
 # on a video file
 python main.py --source path/to/video.mp4 --output output/result.mp4
+# or: make run SOURCE=path/to/video.mp4
 
 # from a webcam, no preview window (e.g. on a server)
 python main.py --source 0 --no-display
@@ -68,7 +70,45 @@ on cv2/ultralytics, so they run without installing the heavy CV/ML stack:
 ```bash
 pip install -r requirements-dev.txt
 python -m pytest
+# or: make install-dev test
 ```
+
+## Docker
+
+For headless/batch use (processing a video file on a server, or in CI) a
+`Dockerfile` is included so behavior doesn't depend on what's installed on
+the host. It's a multi-stage build that keeps the build environment out of
+the shipped image: a `builder` stage installs `requirements.txt` into a venv
+(`test-builder` does the same plus `requirements-dev.txt`), while the final
+`runtime`/`test` stages start fresh from a slim base, add only the OS libs
+opencv/torch need even without a display, and copy in just the venv they
+need — no pip, no apt package lists, no build-time files ever reach the
+final image. `runtime` (the default target) runs `main.py --no-display`;
+`test` runs pytest.
+
+```bash
+make docker-build                       # build the runtime image
+make docker-test                        # run the test suite inside a container
+
+# process a video: DATA_DIR is mounted at /data, SOURCE/OUTPUT/CSV are
+# paths relative to it (defaults: DATA_DIR=. SOURCE=video.mp4
+# OUTPUT=output/result.mp4 CSV=output/tracks.csv)
+make docker-run DATA_DIR=~/videos SOURCE=dashcam.mp4
+```
+
+Equivalent plain `docker` commands, if you'd rather not use `make`:
+
+```bash
+docker build --target runtime -t driver-assist-cv .
+docker build --target test -t driver-assist-cv:test . && docker run --rm driver-assist-cv:test
+docker run --rm -v "$PWD":/data driver-assist-cv \
+    --source /data/video.mp4 --output /data/output/result.mp4 --csv /data/output/tracks.csv
+```
+
+The container is headless by design (`--no-display` is baked into the
+entrypoint) and has no camera device attached — for interactive use with a
+live webcam preview (`--source 0`, `cv2.imshow`), run locally in a venv
+instead of in Docker.
 
 ## CI
 
