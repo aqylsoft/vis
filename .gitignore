@@ -3,11 +3,17 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Environment
+.env
+
 # ML models
 *.pt
 
 # Output files
 output/
+
+#Claude
+.claude
 
 # IDE
 .DS_Store
